@@ -103,3 +103,6 @@ venv.bak/
 # mypy
 .mypy_cache/
 .DS_Store
+MiniImageNet-Res12-Pre-feat/
+
+TieredImagenet-Res12-Pre/
