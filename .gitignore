@@ -104,5 +104,6 @@ venv.bak/
 .mypy_cache/
 .DS_Store
 MiniImageNet-Res12-Pre-feat/
-
+MiniImageNet-Res12-Pre/
 TieredImagenet-Res12-Pre/
+command.txr

@@ -167,8 +167,8 @@ class FEAT(FewShotModel):
         else:
             raise ValueError('')
 
-        # self.slf_attn = MultiHeadAttention(1, hdim, hdim, hdim, dropout=0.5)
-        self.slf_attn = BasicBlock(hdim, hdim)
+        self.slf_attn = MultiHeadAttention(2, hdim, hdim, hdim, dropout=0.5)
+        # self.slf_attn = BasicBlock(hdim, hdim)
 
     def _forward(self, instance_embs, support_idx, query_idx):
         emb_dim = instance_embs.size(-1)
@@ -184,7 +184,7 @@ class FEAT(FewShotModel):
         num_batch = proto.shape[0]
         num_proto = proto.shape[1]
         num_query = np.prod(query_idx.shape[-2:])
-        print(proto.shape)
+        # print(proto.shape)
         # query: (num_batch, num_query, num_proto, num_emb)
         # proto: (num_batch, num_proto, num_emb)
         proto = self.slf_attn(proto, proto, proto)
@@ -214,7 +214,7 @@ class FEAT(FewShotModel):
             aux_task = aux_task.permute([0, 2, 1, 3])
             aux_task = aux_task.contiguous().view(-1, self.args.shot + self.args.query, emb_dim)
             # apply the transformation over the Aug Task
-            print(aux_task.shape)
+            # print(aux_task.shape)
             aux_emb = self.slf_attn(
                 aux_task, aux_task, aux_task)  # T x N x (K+Kq) x d
             # compute class mean
