@@ -84,19 +84,19 @@ class MultiHeadAttention(nn.Module):
 
 
 def conv3x3(in_channels, out_channels, stride=1):
-    return nn.Conv2d(in_channels, out_channels, kernel_size=3,
+    return nn.Conv1d(in_channels, out_channels, kernel_size=3,
                      stride=stride, padding=1, bias=False)
 
 
 class ChannelAttention(nn.Module):
     def __init__(self, in_planes, rotio=16):
         super(ChannelAttention, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)
+        self.max_pool = nn.AdaptiveMaxPool1d(1)
 
         self.sharedMLP = nn.Sequential(
-            nn.Conv2d(in_planes, in_planes // rotio, 1, bias=False), nn.ReLU(),
-            nn.Conv2d(in_planes // rotio, in_planes, 1, bias=False))
+            nn.Conv1d(in_planes, in_planes // rotio, 1, bias=False), nn.ReLU(),
+            nn.Conv1d(in_planes // rotio, in_planes, 1, bias=False))
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
@@ -111,7 +111,8 @@ class SpatialAttention(nn.Module):
         assert kernel_size in (3, 7), "kernel size must be 3 or 7"
         padding = 3 if kernel_size == 7 else 1
 
-        self.conv = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
+        self.conv = nn.Conv1d(2, 1, kernel_size,
+                              padding=padding, bias=False)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
@@ -128,16 +129,17 @@ class BasicBlock(nn.Module):
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(BasicBlock, self).__init__()
         self.conv1 = conv3x3(inplanes, planes, stride)
-        self.bn1 = nn.BatchNorm2d(planes)
+        self.bn1 = nn.BatchNorm1d(planes)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes)
-        self.bn2 = nn.BatchNorm2d(planes)
+        self.bn2 = nn.BatchNorm1d(planes)
         self.ca = ChannelAttention(planes)
         self.sa = SpatialAttention()
         self.downsample = downsample
         self.stride = stride
 
     def forward(self, x, y, z):
+        x = x.permute(0, 2, 1).contiguous()
         residual = x
         out = self.conv1(x)
         out = self.bn1(out)
@@ -150,7 +152,7 @@ class BasicBlock(nn.Module):
             residual = self.downsample(x)
         out += residual
         out = self.relu(out)
-        return out
+        return out.permute(0, 2, 1).contiguous()
 
 
 class FEAT(FewShotModel):
@@ -167,8 +169,9 @@ class FEAT(FewShotModel):
         else:
             raise ValueError('')
 
-        self.slf_attn = MultiHeadAttention(2, hdim, hdim, hdim, dropout=0.5)
-        # self.slf_attn = BasicBlock(hdim, hdim)
+        # self.slf_attn = MultiHeadAttention(1, hdim, hdim, hdim, dropout=0.5)
+        self.slf_attn = BasicBlock(hdim, hdim)
+        # self.slf_attn2 = BasicBlock(20, 20)
 
     def _forward(self, instance_embs, support_idx, query_idx):
         emb_dim = instance_embs.size(-1)
@@ -184,7 +187,8 @@ class FEAT(FewShotModel):
         num_batch = proto.shape[0]
         num_proto = proto.shape[1]
         num_query = np.prod(query_idx.shape[-2:])
-        # print(proto.shape)
+        print("proto:")
+        print(proto.shape)
         # query: (num_batch, num_query, num_proto, num_emb)
         # proto: (num_batch, num_proto, num_emb)
         proto = self.slf_attn(proto, proto, proto)
@@ -214,7 +218,9 @@ class FEAT(FewShotModel):
             aux_task = aux_task.permute([0, 2, 1, 3])
             aux_task = aux_task.contiguous().view(-1, self.args.shot + self.args.query, emb_dim)
             # apply the transformation over the Aug Task
-            # print(aux_task.shape)
+            print("{} {}".format(self.args.shot, self.args.query))
+            print("aux_task")
+            print(aux_task.shape)
             aux_emb = self.slf_attn(
                 aux_task, aux_task, aux_task)  # T x N x (K+Kq) x d
             # compute class mean
