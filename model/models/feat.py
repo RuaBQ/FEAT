@@ -6,90 +6,13 @@ import torch.nn.functional as F
 from model.models import FewShotModel
 
 
-class ScaledDotProductAttention(nn.Module):
-    ''' Scaled Dot-Product Attention '''
-
-    def __init__(self, temperature, attn_dropout=0.1):
-        super().__init__()
-        self.temperature = temperature
-        self.dropout = nn.Dropout(attn_dropout)
-        self.softmax = nn.Softmax(dim=2)
-
-    def forward(self, q, k, v):
-
-        attn = torch.bmm(q, k.transpose(1, 2))
-        attn = attn / self.temperature
-        log_attn = F.log_softmax(attn, 2)
-        attn = self.softmax(attn)
-        attn = self.dropout(attn)
-        output = torch.bmm(attn, v)
-        return output, attn, log_attn
-
-
-class MultiHeadAttention(nn.Module):
-    ''' Multi-Head Attention module '''
-
-    def __init__(self, n_head, d_model, d_k, d_v, dropout=0.1):
-        super().__init__()
-        self.n_head = n_head
-        self.d_k = d_k
-        self.d_v = d_v
-
-        self.w_qs = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.w_ks = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.w_vs = nn.Linear(d_model, n_head * d_v, bias=False)
-        nn.init.normal_(self.w_qs.weight, mean=0,
-                        std=np.sqrt(2.0 / (d_model + d_k)))
-        nn.init.normal_(self.w_ks.weight, mean=0,
-                        std=np.sqrt(2.0 / (d_model + d_k)))
-        nn.init.normal_(self.w_vs.weight, mean=0,
-                        std=np.sqrt(2.0 / (d_model + d_v)))
-
-        self.attention = ScaledDotProductAttention(
-            temperature=np.power(d_k, 0.5))
-        self.layer_norm = nn.LayerNorm(d_model)
-
-        self.fc = nn.Linear(n_head * d_v, d_model)
-        nn.init.xavier_normal_(self.fc.weight)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, q, k, v):
-        d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
-        sz_b, len_q, _ = q.size()
-        sz_b, len_k, _ = k.size()
-        sz_b, len_v, _ = v.size()
-
-        residual = q
-        q = self.w_qs(q).view(sz_b, len_q, n_head, d_k)
-        k = self.w_ks(k).view(sz_b, len_k, n_head, d_k)
-        v = self.w_vs(v).view(sz_b, len_v, n_head, d_v)
-
-        q = q.permute(2, 0, 1, 3).contiguous().view(-1,
-                                                    len_q, d_k)  # (n*b) x lq x dk
-        k = k.permute(2, 0, 1, 3).contiguous().view(-1,
-                                                    len_k, d_k)  # (n*b) x lk x dk
-        v = v.permute(2, 0, 1, 3).contiguous().view(-1,
-                                                    len_v, d_v)  # (n*b) x lv x dv
-
-        output, attn, log_attn = self.attention(q, k, v)
-
-        output = output.view(n_head, sz_b, len_q, d_v)
-        output = output.permute(1, 2, 0, 3).contiguous().view(
-            sz_b, len_q, -1)  # b x lq x (n*dv)
-
-        output = self.dropout(self.fc(output))
-        output = self.layer_norm(output + residual)
-
-        return output
-
-
 def conv3x3(in_channels, out_channels, stride=1):
     return nn.Conv1d(in_channels, out_channels, kernel_size=3,
                      stride=stride, padding=1, bias=False)
 
 
 class ChannelAttention(nn.Module):
-    def __init__(self, in_planes, rotio=16):
+    def __init__(self, in_planes, rotio=3):
         super(ChannelAttention, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool1d(1)
         self.max_pool = nn.AdaptiveMaxPool1d(1)
@@ -138,8 +61,8 @@ class BasicBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-    def forward(self, x, y, z):
-        x = x.permute(0, 2, 1).contiguous()
+    def forward(self, x, y=0, z=0):
+        x = x
         residual = x
         out = self.conv1(x)
         out = self.bn1(out)
@@ -152,7 +75,99 @@ class BasicBlock(nn.Module):
             residual = self.downsample(x)
         out += residual
         out = self.relu(out)
-        return out.permute(0, 2, 1).contiguous()
+        return out
+
+
+class ScaledDotProductAttention(nn.Module):
+    ''' Scaled Dot-Product Attention '''
+
+    def __init__(self, temperature, attn_dropout=0.1):
+        super().__init__()
+        self.temperature = temperature
+        self.dropout = nn.Dropout(attn_dropout)
+        self.softmax = nn.Softmax(dim=2)
+
+    def forward(self, q, k, v):
+
+        attn = torch.bmm(q, k.transpose(1, 2))
+        attn = attn / self.temperature
+        log_attn = F.log_softmax(attn, 2)
+        attn = self.softmax(attn)
+        attn = self.dropout(attn)
+        output = torch.bmm(attn, v)
+        return output, attn, log_attn
+
+
+class MultiHeadAttention(nn.Module):
+    ''' Multi-Head Attention module '''
+
+    def __init__(self, n_head, d_model, d_k, d_v, dropout=0.1):
+        super().__init__()
+        self.n_head = n_head
+        self.d_k = d_k
+        self.d_v = d_v
+
+        self.w_qs = nn.Linear(d_model, n_head * d_k, bias=False)
+        self.w_ks = nn.Linear(d_model, n_head * d_k, bias=False)
+        self.w_vs = nn.Linear(d_model, n_head * d_v, bias=False)
+        nn.init.normal_(self.w_qs.weight, mean=0,
+                        std=np.sqrt(2.0 / (d_model + d_k)))
+        nn.init.normal_(self.w_ks.weight, mean=0,
+                        std=np.sqrt(2.0 / (d_model + d_k)))
+        nn.init.normal_(self.w_vs.weight, mean=0,
+                        std=np.sqrt(2.0 / (d_model + d_v)))
+
+        self.attention = ScaledDotProductAttention(
+            temperature=np.power(d_k, 0.5))
+
+        self.slf_attn = BasicBlock(3, 3)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.fc = nn.Linear(n_head * d_v, d_model)
+        nn.init.xavier_normal_(self.fc.weight)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, q, k, v):
+        d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
+        sz_b, len_q, _ = q.size()
+        sz_b, len_k, _ = k.size()
+        sz_b, len_v, _ = v.size()
+
+        residual = q
+        q = self.w_qs(q).view(sz_b, len_q, n_head, d_k)
+        k = self.w_ks(k).view(sz_b, len_k, n_head, d_k)
+        v = self.w_vs(v).view(sz_b, len_v, n_head, d_v)
+
+        q = q.permute(2, 0, 1, 3).contiguous().view(-1,
+                                                    len_q, d_k)  # (n*b) x lq x dk
+        k = k.permute(2, 0, 1, 3).contiguous().view(-1,
+                                                    len_k, d_k)  # (n*b) x lk x dk
+        v = v.permute(2, 0, 1, 3).contiguous().view(-1,
+                                                    len_v, d_v)  # (n*b) x lv x dv
+
+        q, k, v = self.slf_attn(torch.cat([
+            q.view(*(-1,)+(1, d_k)),
+            k.view(*(-1,)+(1, d_k)),
+            v.view(*(-1,)+(1, d_k))], dim=1)).chunk(3, dim=1)
+
+        q = q.contiguous().view(-1,
+                                len_q, d_k)  # (n*b) x lq x dk
+        k = k.contiguous().view(-1,
+                                len_k, d_k)  # (n*b) x lk x dk
+        v = v.contiguous().view(-1,
+                                len_v, d_v)  # (n*b) x lv x dv
+
+        output, attn, log_attn = self.attention(q, k, v)
+
+        output = output.view(n_head, sz_b, len_q, d_v)
+        output = output.permute(1, 2, 0, 3).contiguous().view(
+            sz_b, len_q, -1)  # b x lq x (n*dv)
+
+        output = self.dropout(self.fc(output))
+        output = self.layer_norm(output + residual)
+
+        return output
 
 
 class FEAT(FewShotModel):
@@ -169,26 +184,29 @@ class FEAT(FewShotModel):
         else:
             raise ValueError('')
 
-        # self.slf_attn = MultiHeadAttention(1, hdim, hdim, hdim, dropout=0.5)
-        self.slf_attn = BasicBlock(hdim, hdim)
+        self.slf_attn = MultiHeadAttention(1, hdim, hdim, hdim, dropout=0.5)
+        # self.slf_attn = BasicBlock(hdim, hdim)
         # self.slf_attn2 = BasicBlock(20, 20)
 
     def _forward(self, instance_embs, support_idx, query_idx):
         emb_dim = instance_embs.size(-1)
-
+        # print("{}\n{}\n{}\n".format(instance_embs.shape,
+        # support_idx.shape, query_idx.shape))
         # organize support/query data
         support = instance_embs[support_idx.contiguous(
         ).view(-1)].contiguous().view(*(support_idx.shape + (-1,)))
         query = instance_embs[query_idx.contiguous(
         ).view(-1)].contiguous().view(*(query_idx.shape + (-1,)))
 
+        # print("support:{} query:{}".format(support.shape, query.shape))
+
         # get mean of the support
         proto = support.mean(dim=1)  # Ntask x NK x d
         num_batch = proto.shape[0]
         num_proto = proto.shape[1]
         num_query = np.prod(query_idx.shape[-2:])
-        print("proto:")
-        print(proto.shape)
+        # print("proto:")
+        # print(proto.shape)
         # query: (num_batch, num_query, num_proto, num_emb)
         # proto: (num_batch, num_proto, num_emb)
         proto = self.slf_attn(proto, proto, proto)
@@ -214,13 +232,13 @@ class FEAT(FewShotModel):
         if self.training:
             aux_task = torch.cat([support.view(1, self.args.shot, self.args.way, emb_dim),
                                   query.view(1, self.args.query, self.args.way, emb_dim)], 1)  # T x (K+Kq) x N x d
-            num_query = np.prod(aux_task.shape[1:3])
+            num_query = np.prod(aux_task.shape[1: 3])
             aux_task = aux_task.permute([0, 2, 1, 3])
             aux_task = aux_task.contiguous().view(-1, self.args.shot + self.args.query, emb_dim)
             # apply the transformation over the Aug Task
-            print("{} {}".format(self.args.shot, self.args.query))
-            print("aux_task")
-            print(aux_task.shape)
+            # print("{} {}".format(self.args.shot, self.args.query))
+            # print("aux_task")
+            # print(aux_task.shape)
             aux_emb = self.slf_attn(
                 aux_task, aux_task, aux_task)  # T x N x (K+Kq) x d
             # compute class mean
